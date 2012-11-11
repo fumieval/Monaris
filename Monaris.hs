@@ -7,8 +7,8 @@ import Data.List
 import Data.Function
 import Data.Array
 import Data.Char
-import Data.Vect.Double
 import Data.Maybe
+import Data.Vect.Double
 import qualified Data.Map as M
 import Control.Monad.Free
 import System.Directory
@@ -162,7 +162,7 @@ eliminate field = do
                 $ \(_, r) color -> ?picBlocks M.! (color, if r `elem` rows then n else 0)
 
 gameOver field = do
-    let pics = [Translate (Vec2 x y) (?picBlocks M.! (p, 0)) | (ix@(c, r), color) <- assocs field
+    let pics = [Translate (x, y) (?picBlocks M.! (p, 0)) | (ix@(c, r), color) <- assocs field
             , let x = ?blockSize * fromIntegral c, let y = ?blockSize * fromIntegral r
             , p <- maybeToList color]
     objs <- forM pics $ \pic -> do
@@ -170,7 +170,7 @@ gameOver field = do
         return (zero, Vec2 dx (-3), pic)
     run 120 objs
     where
-        update (pos, v, pic) = drawPicture (Translate pos pic)
+        update (pos@(Vec2 x y), v, pic) = drawPicture (Translate (x, y) pic)
             >> return (pos &+ v, v &+ Vec2 0 0.2, pic)
         run 0 _ = return ()
         run n objs = do
@@ -197,9 +197,9 @@ gameMain field total period (omino, color) next = do
     where
         embed (Pure a) = return a
         embed m = do
-            let drawTo x y = drawPicture . Translate (Vec2 x y)
+            let drawTo x y = drawPicture . Translate (x, y)
             drawTo 320 240 ?picBackground
-            cont <- hoistFree (transPicture $ Translate (Vec2 24 24)) $ do
+            cont <- hoistFree (transPicture $ Translate (24, 24)) $ do
                 drawPicture $ renderFieldBackground field
                 untick m
             drawTo 480 133 $ renderString $ show total
@@ -212,14 +212,14 @@ gameTitle :: (?picCharWidth :: Double, ?picChars :: M.Map Char Picture, ?picTitl
     => Free Game ()
 gameTitle = do
     z <- askInput (KeyChar 'Z')
-    drawPicture $ Translate (Vec2 320 240) ?picTitle
-    drawPicture $ Translate (Vec2 490 182) $ renderString (show ?highScore)
+    drawPicture $ Translate (320, 240) ?picTitle
+    drawPicture $ Translate (490, 182) $ renderString (show ?highScore)
     tick
     when (not z) gameTitle
     return ()
 
 renderFieldBackground :: (?picBlockBackground :: Picture, ?blockSize :: Double) => Field -> Picture
-renderFieldBackground field = Pictures $ [Translate (Vec2 x y) ?picBlockBackground
+renderFieldBackground field = Pictures $ [Translate (x, y) ?picBlockBackground
     | (c, r) <- indices field, r >= 0
     , let x = ?blockSize * fromIntegral c, let y = ?blockSize * fromIntegral r]
 
@@ -229,18 +229,18 @@ renderField = renderFieldBy $ \_ color -> ?picBlocks M.! (color, 0)
 
 renderFieldBy :: (?blockSize :: Double)
     => (Coord -> Color -> Picture) -> Field -> Picture
-renderFieldBy f field = Pictures $ [Translate (Vec2 x y) pic
+renderFieldBy f field = Pictures $ [Translate (x, y) pic
     | (ix@(c, r), color) <- assocs field
     , r >= 0, let x = ?blockSize * fromIntegral c, let y = ?blockSize * fromIntegral r
     , pic <- maybeToList (f ix <$> color)]
 
 renderPolyomino :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Double)
     => Int -> Polyomino -> Color -> Picture
-renderPolyomino i omino color = Pictures [Translate (Vec2 x y) (?picBlocks M.! (color, i))
+renderPolyomino i omino color = Pictures [Translate (x, y) (?picBlocks M.! (color, i))
     | (c, r) <- omino, r >= 0 , let x = ?blockSize * fromIntegral c, let y = ?blockSize * fromIntegral r]
 
 renderString :: (?picCharWidth :: Double, ?picChars :: M.Map Char Picture) => String -> Picture
-renderString str = Pictures [Translate (Vec2 (?picCharWidth * i) 0) $ ?picChars M.! ch
+renderString str = Pictures [Translate (?picCharWidth * i, 0) $ ?picChars M.! ch
     | (i, ch) <- zip [0..] str]
 
 main :: IO ()
@@ -248,18 +248,18 @@ main = void $ runGame True "Monaris" 60 $ do
     let colors = enumFrom Red
         initialField = listArray ((0,-4), (9,18)) (repeat Nothing)
 
-    imgChars <- loadImgFromFile "images/numbers.png"
+    imgChars <- embedIO $ loadBitmapFromFile "images/numbers.png"
     picChars' <- liftM M.fromAscList $ forM [0..9]
-        $ \n -> (,) (intToDigit n) <$> loadImage (cropImg imgChars (24, 32) (n * 24, 0))
+        $ \n -> (,) (intToDigit n) <$> loadPicture (cropBitmap imgChars (24, 32) (n * 24, 0))
 
-    imgBlocks <- loadImgFromFile "images/Block.png"
+    imgBlocks <- embedIO $ loadBitmapFromFile "images/Block.png"
     picBlocks' <- liftM M.fromAscList $ forM ((,) <$> zip [0..] colors <*> [0..7])
-        $ \((i, color), j) -> (,) (color, j) <$> loadImage (cropImg imgBlocks (48, 48) (i * 48, j * 48))
+        $ \((i, color), j) -> (,) (color, j) <$> loadPicture (cropBitmap imgBlocks (48, 48) (i * 48, j * 48))
 
-    imgBackground <- loadImgFromFile "images/background.png" >>= loadImage
-    imgBlockBackground <- loadImgFromFile "images/block-background.png" >>= loadImage
+    imgBackground <- embedIO (loadBitmapFromFile "images/background.png") >>= loadPicture
+    imgBlockBackground <- embedIO (loadBitmapFromFile "images/block-background.png") >>= loadPicture
     
-    imgTitle <- loadImgFromFile "images/title.png" >>= loadImage
+    imgTitle <- embedIO (loadBitmapFromFile "images/title.png") >>= loadPicture
 
     let ?picCharWidth = 18
         ?picChars = picChars'
