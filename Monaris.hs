@@ -12,8 +12,7 @@ import Data.Vect.Double
 import qualified Data.Map as M
 import Control.Monad.Free
 import System.Directory
-import FreeGame
-import FreeGame.Backends.DXFI
+import Graphics.FreeGame
 
 type Coord = (Int, Int)
 (a, b) #+# (c, d) = (a + c, b + d)
@@ -64,7 +63,8 @@ putToField :: Color -> Field -> Polyomino -> Maybe Field
 putToField color field omino = [field // map (,Just color) omino
     | all ((&&) <$> inRange (bounds field) <*> fmap isNothing (field !)) omino]
 
-getPolyomino = liftF $ Randomness (0, length polyominos - 1) (polyominos!!)
+getPolyomino :: Game (Polyomino, Color)
+getPolyomino = (polyominos!!) <$> randomness (0, length polyominos - 1)
 
 rotationStrategy :: Polyomino -> Field -> [Polyomino] -> Polyomino
 rotationStrategy original field = maximumBy (compare `on` ev) where
@@ -76,7 +76,7 @@ rotationStrategy original field = maximumBy (compare `on` ev) where
 type Inp = ((Bool, Bool, Bool, Bool, Bool, Bool), (Bool, Bool, Bool, Bool, Bool, Bool))
 
 place :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Double, ?picBlockBackground :: Picture)
-    => Polyomino -> Color -> Field -> Int -> Free Game (Maybe Field)
+    => Polyomino -> Color -> Field -> Int -> Game (Maybe Field)
 place polyomino color field period = do
     if or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))] then return Nothing 
         else run 1 (Left 0) (False, False, False, False, False, False)
@@ -100,7 +100,7 @@ place polyomino color field period = do
             Just p -> tick >> run (succ t) p (l',r',u',d',z',x')
             Nothing -> return (putF omino)
     
-    handleCommon :: ReaderT Inp (StateT Polyomino (Free Game)) Bool
+    handleCommon :: ReaderT Inp (StateT Polyomino Game) Bool
     handleCommon = do
         ((l,r,u,d,z,x),(l',r',u',d',z',x')) <- ask
         a <- case (not l && l', not r && r') of
@@ -151,16 +151,17 @@ place polyomino color field period = do
         | otherwise = destination omino'
         where omino' = translate (0, 1) omino
 
-eliminate :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Double, ?picBlockBackground::Picture)
-    => Field -> Free Game (Field, Int)
+eliminate :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Double, ?picBlockBackground :: Picture)
+    => Field -> Game (Field, Int)
 eliminate field = do
-    forM_ [0..5] $ \i -> replicateM_ 2 $ draw i >> tick
+    when (not.null $ rows) $ forM_ [0..5] $ \i -> replicateM_ 2 $ draw i >> tick
     return (foldl deleteLine field rows, length rows)
     where
         rows = completeLines field
         draw n = drawPicture $ flip renderFieldBy field
                 $ \(_, r) color -> ?picBlocks M.! (color, if r `elem` rows then n else 0)
 
+gameOver :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Double) => Field -> Game ()
 gameOver field = do
     let pics = [Translate (x, y) (?picBlocks M.! (p, 0)) | (ix@(c, r), color) <- assocs field
             , let x = ?blockSize * fromIntegral c, let y = ?blockSize * fromIntegral r
@@ -178,14 +179,11 @@ gameOver field = do
             tick
             run (n - 1) objs'
 
-gameMain :: (?picBlocks :: M.Map (Color, Int) Picture
-    , ?blockSize :: Double
-    , ?picCharWidth :: Double
-    , ?picChars :: M.Map Char Picture
-    , ?picBackground :: Picture
-    , ?picBlockBackground :: Picture
+gameMain :: (?blockSize :: Double, ?picBlocks :: M.Map (Color, Int) Picture
+    , ?picCharWidth :: Double , ?picChars :: M.Map Char Picture
+    , ?picBackground :: Picture, ?picBlockBackground :: Picture
     , ?highScore :: Int)
-    => Field -> Int -> Int -> (Polyomino, Color) -> (Polyomino, Color) -> Free Game Int
+    => Field -> Int -> Int -> (Polyomino, Color) -> (Polyomino, Color) -> Game Int
 gameMain field total period (omino, color) next = do
     r <- embed $ place omino color field period
     case r of
@@ -201,15 +199,15 @@ gameMain field total period (omino, color) next = do
             drawTo 320 240 ?picBackground
             cont <- hoistFree (transPicture $ Translate (24, 24)) $ do
                 drawPicture $ renderFieldBackground field
-                untick m
+                untickGame m
             drawTo 480 133 $ renderString $ show total
             drawTo 480 166 $ renderString $ show ?highScore
-            drawTo 500 200 $ uncurry (renderPolyomino 0) next
+            drawTo 500 220 $ uncurry (renderPolyomino 0) next
             tick
             embed cont
 
 gameTitle :: (?picCharWidth :: Double, ?picChars :: M.Map Char Picture, ?picTitle :: Picture, ?highScore :: Int)
-    => Free Game ()
+    => Game ()
 gameTitle = do
     z <- askInput (KeyChar 'Z')
     drawPicture $ Translate (320, 240) ?picTitle
@@ -244,7 +242,7 @@ renderString str = Pictures [Translate (?picCharWidth * i, 0) $ ?picChars M.! ch
     | (i, ch) <- zip [0..] str]
 
 main :: IO ()
-main = void $ runGame True "Monaris" 60 $ do
+main = void $ runGame (defaultGameParam {windowTitle="Monaris"}) $ do
     let colors = enumFrom Red
         initialField = listArray ((0,-4), (9,18)) (repeat Nothing)
 
@@ -275,6 +273,7 @@ main = void $ runGame True "Monaris" 60 $ do
             score <- join $ gameMain initialField 0 60 <$> getPolyomino <*> getPolyomino
             when (?highScore < score) $ embedIO $ writeFile "highscore" (show score)
             loop (max score ?highScore)
+
     f <- embedIO $ doesFileExist "highscore"
     score <- if f then embedIO $ read <$> readFile "highscore" else return 0
     loop score
