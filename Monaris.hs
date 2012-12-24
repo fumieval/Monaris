@@ -13,6 +13,7 @@ import qualified Data.Map as M
 import Control.Monad.Free
 import System.Directory
 import Graphics.FreeGame
+import Paths_Monaris
 
 type Coord = (Int, Int)
 (a, b) #+# (c, d) = (a + c, b + d)
@@ -243,21 +244,22 @@ renderString str = Pictures [Translate (?picCharWidth * i, 0) $ ?picChars M.! ch
 
 main :: IO ()
 main = void $ runGame (defaultGameParam {windowTitle="Monaris"}) $ do
+
     let colors = enumFrom Red
         initialField = listArray ((0,-4), (9,18)) (repeat Nothing)
-
-    imgChars <- embedIO $ loadBitmapFromFile "images/numbers.png"
+        load path = embedIO $ getDataFileName path >>= loadBitmapFromFile
+    imgChars <- load "images/numbers.png"
     picChars' <- liftM M.fromAscList $ forM [0..9]
         $ \n -> (,) (intToDigit n) <$> loadPicture (cropBitmap imgChars (24, 32) (n * 24, 0))
 
-    imgBlocks <- embedIO $ loadBitmapFromFile "images/Block.png"
+    imgBlocks <- load "images/Block.png"
     picBlocks' <- liftM M.fromAscList $ forM ((,) <$> zip [0..] colors <*> [0..7])
         $ \((i, color), j) -> (,) (color, j) <$> loadPicture (cropBitmap imgBlocks (48, 48) (i * 48, j * 48))
 
-    imgBackground <- embedIO (loadBitmapFromFile "images/background.png") >>= loadPicture
-    imgBlockBackground <- embedIO (loadBitmapFromFile "images/block-background.png") >>= loadPicture
+    imgBackground <- load "images/background.png" >>= loadPicture
+    imgBlockBackground <- load "images/block-background.png" >>= loadPicture
     
-    imgTitle <- embedIO (loadBitmapFromFile "images/title.png") >>= loadPicture
+    imgTitle <- load "images/title.png" >>= loadPicture
 
     let ?picCharWidth = 18
         ?picChars = picChars'
