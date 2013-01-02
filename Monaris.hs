@@ -141,7 +141,7 @@ place polyomino color field period = do
                       else return False
     
     sp dir = do omino <- get
-                 case filter (isJust . putF) $ map (flip (spin dir) omino) $ centers omino of
+                case filter (isJust . putF) $ map (flip (spin dir) omino) $ centers omino of
                      [] -> return False
                      xs -> put (spinStrategy omino field xs) >> return True
 
@@ -182,15 +182,15 @@ gameMain :: (?blockSize :: Float, ?picBlocks :: M.Map (Color, Int) Picture
     , ?picCharWidth :: Float , ?picChars :: M.Map Char Picture
     , ?picBackground :: Picture, ?picBlockBackground :: Picture
     , ?highScore :: Int)
-    => Field -> Int -> Int -> (Polyomino, Color) -> (Polyomino, Color) -> Game Int
-gameMain field total period (omino, color) next = do
-    r <- embed $ place omino color field period
+    => Field -> Int -> Float -> (Polyomino, Color) -> (Polyomino, Color) -> Game Int
+gameMain field total line (omino, color) next = do
+    r <- embed $ place omino color field (floor $ 60 * 2**(-line/50))
     case r of
         Nothing -> embed (gameOver field) >> return total
         Just field' -> do
             (field'', n) <- embed $ eliminate field'
             next' <- getPolyomino
-            gameMain field'' (total + n ^ 2) (max 1 $ period - n) next next'
+            gameMain field'' (total + n ^ 2) (line + fromIntegral n) next next'
     where
         embed (Pure a) = return a
         embed m = do
@@ -271,7 +271,7 @@ main = void $ runGame (defaultGameParam {windowTitle="Monaris"}) $ do
     let loop h = do
             let ?highScore = h
             _ <- gameTitle
-            score <- join $ gameMain initialField 0 60 <$> getPolyomino <*> getPolyomino
+            score <- join $ gameMain initialField 0 0 <$> getPolyomino <*> getPolyomino
             when (?highScore < score) $ embedIO $ writeFile highscorePath (show score)
             loop (max score ?highScore)
 
