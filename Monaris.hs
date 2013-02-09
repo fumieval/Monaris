@@ -73,8 +73,7 @@ spinStrategy original field = maximumBy (compare `on` ev) where
             | r <- nub $ map snd x]
         where neighbors = nub $ pair2 (+) <$> x <*> [(0, 1), (0, -1), (1, 0), (1, 1)]
 
-place :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Float, ?picBlockBackground :: Picture)
-    => Polyomino -> Color -> Field -> Int -> Game (Maybe Field)
+place :: (?env :: Environment) => Polyomino -> Color -> Field -> Int -> Game (Maybe Field)
 place polyomino color field period = do
     if or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))] then return Nothing 
         else run 1 (Left 0) (False, False, False, False, False, False)
@@ -147,23 +146,18 @@ place polyomino color field period = do
         | otherwise = destination omino'
         where omino' = translate (0, 1) omino
 
-eliminate :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Float, ?picBlockBackground :: Picture)
-    => Field -> Game (Field, Int)
+eliminate :: (?env :: Environment) => Field -> Game (Field, Int)
 eliminate field = do
-    when (not.null $ rows) $ forM_ [0..5] $ \i -> replicateM_ 2 $ draw i >> tick
+    unless (null rows) $ forM_ [0..5] $ \i -> replicateM_ 2 $ draw i >> tick
     return (foldl deleteLine field rows, length rows)
     where
         rows = completeLines field
         draw n = drawPicture $ flip renderFieldBy field
-                $ \(_, r) color -> ?picBlocks M.! (color, if r `elem` rows then n else 0)
+                $ \(_, r) color -> picBlocks ?env M.! (color, if r `elem` rows then n else 0)
 
-gameMain :: (?blockSize :: Float, ?picBlocks :: M.Map (Color, Int) Picture
-    , ?picCharWidth :: Float , ?picChars :: M.Map Char Picture
-    , ?picBackground :: Picture, ?picBlockBackground :: Picture
-    , ?highScore :: Int)
-    => Field -> Int -> Float -> (Polyomino, Color) -> (Polyomino, Color) -> Game Int
+gameMain :: (?env :: Environment, ?highScore :: Int) => Field -> Int -> Float -> (Polyomino, Color) -> (Polyomino, Color) -> Game Int
 gameMain field total line (omino, color) next = do
-    r <- embed $ place omino color field (floor $ 60 * 2**(-line/50))
+    r <- embed $ place omino color field (floor $ 60 * 2**(-line/40))
     case r of
         Nothing -> total <$ embed (gameOver field)
         Just field' -> do
@@ -174,7 +168,7 @@ gameMain field total line (omino, color) next = do
         embed (Pure a) = return a
         embed m = do
             let drawTo x y = drawPicture . Translate (Vec2 x y)
-            drawTo 320 240 ?picBackground
+            drawTo 320 240 $ picBackground ?env
             cont <- hoistFree (transPicture $ Translate (Vec2 24 24)) $ do
                 drawPicture $ renderFieldBackground field
                 untickGame m
@@ -184,20 +178,21 @@ gameMain field total line (omino, color) next = do
             tick
             embed cont
 
-gameTitle :: (?picCharWidth :: Float, ?picChars :: M.Map Char Picture, ?picTitle :: Picture, ?highScore :: Int) => Game ()
+gameTitle :: (?env :: Environment, ?highScore :: Int) => Game ()
 gameTitle = do
     z <- askInput (KeyChar 'Z')
-    drawPicture $ Translate (Vec2 320 240) ?picTitle
-    drawPicture $ Translate (Vec2 490 182) $ renderString (show ?highScore)
+    drawPicture $ Translate (Vec2 320 240) (picTitle ?env)
+    drawPicture $ Translate (Vec2 490 182) $ renderString $ show ?highScore
     tick
     when (not z) gameTitle
 
-blockPos :: (?blockSize :: Float) => Int -> Int -> Vec2
-blockPos c r = ?blockSize *& Vec2 (fromIntegral c) (fromIntegral r)
+blockPos :: (?env :: Environment) => Int -> Int -> Vec2
+blockPos c r = blockSize ?env *& Vec2 (fromIntegral c) (fromIntegral r)
 
-gameOver :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Float) => Field -> Game ()
+gameOver :: (?env :: Environment) => Field -> Game ()
 gameOver field = do
-    let pics = [Translate (blockPos c r) (?picBlocks M.! (p, 0)) | ((c, r), color) <- assocs field, p <- maybeToList color]
+    let pics = [Translate (blockPos c r) (picBlocks ?env M.! (p, 0))
+            | ((c, r), color) <- assocs field, p <- maybeToList color]
     objs <- forM pics $ \pic -> do
         dx <- randomness (-1,1)
         return (zero, Vec2 dx (-3), pic)
@@ -206,24 +201,32 @@ gameOver field = do
         update (pos, v, pic) = (pos &+ v, v &+ Vec2 0 0.2, pic) <$ drawPicture (Translate pos pic)
         run objs = const $ mapM update objs <* tick
 
-renderFieldBackground :: (?picBlockBackground :: Picture, ?blockSize :: Float) => Field -> Picture
-renderFieldBackground field = Pictures [blockPos c r `Translate` ?picBlockBackground | (c, r) <- indices field, r >= 0]
+renderFieldBackground :: (?env :: Environment) => Field -> Picture
+renderFieldBackground field = Pictures [blockPos c r `Translate` picBlockBackground ?env | (c, r) <- indices field, r >= 0]
 
-renderField :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Float, ?picBlockBackground :: Picture)
-    => Field -> Picture
-renderField = renderFieldBy $ \_ color -> ?picBlocks M.! (color, 0)
+renderField :: (?env :: Environment) => Field -> Picture
+renderField = renderFieldBy $ \_ color -> picBlocks ?env M.! (color, 0)
 
-renderFieldBy :: (?blockSize :: Float)
-    => (Coord -> Color -> Picture) -> Field -> Picture
+renderFieldBy :: (?env :: Environment) => (Coord -> Color -> Picture) -> Field -> Picture
 renderFieldBy f field = Pictures [blockPos c r `Translate` pic
     | (ix@(c, r), color) <- assocs field, r >= 0, pic <- maybeToList $ f ix <$> color]
 
-renderPolyomino :: (?picBlocks :: M.Map (Color, Int) Picture, ?blockSize :: Float)
-    => Int -> Polyomino -> Color -> Picture
-renderPolyomino i omino color = Pictures [blockPos c r `Translate` (?picBlocks M.! (color, i)) | (c, r) <- omino, r >= 0]
+renderPolyomino :: (?env :: Environment) => Int -> Polyomino -> Color -> Picture
+renderPolyomino i omino color = Pictures [blockPos c r `Translate` (picBlocks ?env M.! (color, i))
+    | (c, r) <- omino, r >= 0]
 
-renderString :: (?picCharWidth :: Float, ?picChars :: M.Map Char Picture) => String -> Picture
-renderString str = Pictures [Vec2 (?picCharWidth * i) 0 `Translate` (?picChars M.! ch) | (i, ch) <- zip [0..] str]
+renderString :: (?env :: Environment) => String -> Picture
+renderString str = Pictures [Vec2 (picCharWidth ?env * i) 0 `Translate` (picChars ?env M.! ch) | (i, ch) <- zip [0..] str]
+
+data Environment = Environment
+    { picBlocks :: M.Map (Color, Int) Picture
+    , picChars :: M.Map Char Picture
+    , picBlockBackground :: Picture
+    , picBackground :: Picture
+    , picTitle :: Picture
+    , blockSize :: Float
+    , picCharWidth :: Float
+    }
 
 main :: IO ()
 main = void $ runGame (defaultGameParam {windowTitle="Monaris"}) $ do
@@ -231,27 +234,24 @@ main = void $ runGame (defaultGameParam {windowTitle="Monaris"}) $ do
     let initialField = listArray ((0,-4), (9,18)) (repeat Nothing)
         load path = embedIO $ getDataFileName path >>= loadBitmapFromFile
 
-    imgChars <- load "images/numbers.png"
-    picChars' <- liftM M.fromAscList $ forM [0..9]
-        $ \n -> (intToDigit n,) <$> loadPicture (cropBitmap imgChars (24, 32) (n * 24, 0))
-
-    imgBlocks <- load "images/Block.png"
-    picBlocks' <- liftM M.fromAscList $ forM ((,) <$> zip [0..] (enumFrom Red) <*> [0..7])
-        $ \((i, color), j) -> ((color, j),) <$> loadPicture (cropBitmap imgBlocks (48, 48) (i * 48, j * 48))
-
-    imgBackground       <- load "images/background.png"       >>= loadPicture
-    imgBlockBackground  <- load "images/block-background.png" >>= loadPicture
-    imgTitle            <- load "images/title.png"            >>= loadPicture
+    imgChars            <- load "images/numbers.png"
+    imgBlocks           <- load "images/Block.png"
+    imgBackground       <- load "images/background.png"
+    imgBlockBackground  <- load "images/block-background.png"
+    imgTitle            <- load "images/title.png"
 
     highscorePath <- embedIO $ (++"/.monaris_highscore") <$> getHomeDirectory
 
-    let ?picCharWidth = 18
-        ?picChars = picChars'
-        ?blockSize = 24
-        ?picBlocks = picBlocks'
-        ?picBackground = imgBackground
-        ?picBlockBackground = imgBlockBackground
-        ?picTitle = imgTitle
+    let ?env = Environment
+                (M.fromAscList [((color, j), BitmapPicture $ cropBitmap imgBlocks (48, 48) (i * 48, j * 48))
+                    | (i, color) <- zip [0..] (enumFrom Red), j <- [0..7]])
+                (M.fromAscList [(intToDigit n, BitmapPicture $ cropBitmap imgChars (24, 32) (n * 24, 0))
+                    | n <- [0..9]])
+                (BitmapPicture imgBlockBackground)
+                (BitmapPicture imgBackground)
+                (BitmapPicture imgTitle)
+                48
+                24
 
     let loop h = do
             let ?highScore = h
