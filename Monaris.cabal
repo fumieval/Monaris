@@ -1,5 +1,5 @@
 name:                Monaris
-version:             0.1.3
+version:             0.1.4
 synopsis:            A simple tetris clone
 description:         A tetris clone written in Haskell.
 homepage:            https://github.com/fumieval/Monaris/

@@ -15,31 +15,27 @@ import System.Directory
 import Graphics.FreeGame
 import Paths_Monaris
 
-type Field = Array Coord (Maybe Color)
-data Color = Red | Yellow | Green | Cyan | Blue | Magenta | Orange deriving (Eq, Ord, Enum)
+type Field = Array Coord (Maybe BlockColor)
+type BlockColor = Int
 type Coord = (Int, Int)
 type Polyomino = [Coord]
-data Spin = CCW | CW
 
 pair f (x, y) = (f x, f y)
 pair2 f (a, b) (c, d) = (f a c, f b d)
 
-polyominos = [([(0,0),(0,1),(0,2),(0,3)], Cyan)
-             ,([(0,0),(0,1),(1,0),(1,1)], Yellow)
-             ,([(0,0),(0,1),(0,2),(1,2)], Orange)
-             ,([(0,0),(0,1),(0,2),(-1,2)], Blue)
-             ,([(0,0),(0,1),(1,1),(1,2)], Green)
-             ,([(0,0),(0,1),(-1,1),(-1,2)], Red)
-             ,([(0,0),(-1,0),(1,0),(0,1)], Magenta)]
+polyominos = [([(0,0),(0,1),(0,2),(0,3)], 3)
+             ,([(0,0),(0,1),(1,0),(1,1)], 1)
+             ,([(0,0),(0,1),(0,2),(1,2)], 6)
+             ,([(0,0),(0,1),(0,2),(-1,2)], 4)
+             ,([(0,0),(0,1),(1,1),(1,2)], 2)
+             ,([(0,0),(0,1),(-1,1),(-1,2)], 0)
+             ,([(0,0),(-1,0),(1,0),(0,1)], 5)]
 
 translate :: Coord -> Polyomino -> Polyomino
 translate = map . pair2 (+)
 
-spin :: Spin -> Coord -> Polyomino -> Polyomino
-spin d center = map $ pair (`div`2) . pair2 (+) center . t . pair2 subtract center . pair (2*) where 
-    t = case d of
-            CCW -> \(x, y) -> (-y, x)
-            CW -> \(x, y) -> (y, -x)
+spin :: (Coord -> Coord) -> Coord -> Polyomino -> Polyomino
+spin t center = map $ pair (`div`2) . pair2 (+) center . t . pair2 subtract center . pair (2*) where 
 
 centers :: Polyomino -> [Coord]
 centers cs = cs' ++ [i | i@(c, r) <- map (pair2 (+) (1,1)) cs'
@@ -58,11 +54,11 @@ deleteLine field n = array bnd [ a' | a@(ix@(c, r), _) <- assocs field
              | otherwise = a] where
          bnd@((_, r0), _) = bounds field
 
-putToField :: Color -> Field -> Polyomino -> Maybe Field
+putToField :: BlockColor -> Field -> Polyomino -> Maybe Field
 putToField color field omino = [field // map (,Just color) omino
     | all ((&&) <$> inRange (bounds field) <*> fmap isNothing (field !)) omino]
 
-getPolyomino :: Game (Polyomino, Color)
+getPolyomino :: Game (Polyomino, BlockColor)
 getPolyomino = (polyominos!!) <$> randomness (0, length polyominos - 1)
 
 spinStrategy :: Polyomino -> Field -> [Polyomino] -> Polyomino
@@ -73,7 +69,7 @@ spinStrategy original field = maximumBy (compare `on` ev) where
             | r <- nub $ map snd x]
         where neighbors = nub $ pair2 (+) <$> x <*> [(0, 1), (0, -1), (1, 0), (1, 1)]
 
-place :: (?env :: Environment) => Polyomino -> Color -> Field -> Int -> Game (Maybe Field)
+place :: (?env :: Environment) => Polyomino -> BlockColor -> Field -> Int -> Game (Maybe Field)
 place polyomino color field period = do
     if or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))] then return Nothing 
         else run 1 (Left 0) (False, False, False, False, False, False)
@@ -105,8 +101,8 @@ place polyomino color field period = do
             (False, True) -> move (1, 0)
             _ -> return False
         b <- case (not z && z', not x && x') of
-            (True, False) -> sp CCW
-            (False, True) -> sp CW
+            (True, False) -> sp (\(x, y) -> (-y, x))
+            (False, True) -> sp (\(x, y) -> (y, -x))
             _ -> return False
         return $ a || b
     
@@ -155,7 +151,7 @@ eliminate field = do
         draw n = drawPicture $ flip renderFieldBy field
                 $ \(_, r) color -> picBlocks ?env M.! (color, if r `elem` rows then n else 0)
 
-gameMain :: (?env :: Environment, ?highScore :: Int) => Field -> Int -> Float -> (Polyomino, Color) -> (Polyomino, Color) -> Game Int
+gameMain :: (?env :: Environment, ?highScore :: Int) => Field -> Int -> Float -> (Polyomino, BlockColor) -> (Polyomino, BlockColor) -> Game Int
 gameMain field total line (omino, color) next = do
     r <- embed $ place omino color field (floor $ 60 * 2**(-line/40))
     case r of
@@ -184,7 +180,7 @@ gameTitle = do
     drawPicture $ Translate (Vec2 320 240) (picTitle ?env)
     drawPicture $ Translate (Vec2 490 182) $ renderString $ show ?highScore
     tick
-    when (not z) gameTitle
+    unless z gameTitle
 
 blockPos :: (?env :: Environment) => Int -> Int -> Vec2
 blockPos c r = blockSize ?env *& Vec2 (fromIntegral c) (fromIntegral r)
@@ -207,11 +203,11 @@ renderFieldBackground field = Pictures [blockPos c r `Translate` picBlockBackgro
 renderField :: (?env :: Environment) => Field -> Picture
 renderField = renderFieldBy $ \_ color -> picBlocks ?env M.! (color, 0)
 
-renderFieldBy :: (?env :: Environment) => (Coord -> Color -> Picture) -> Field -> Picture
+renderFieldBy :: (?env :: Environment) => (Coord -> BlockColor -> Picture) -> Field -> Picture
 renderFieldBy f field = Pictures [blockPos c r `Translate` pic
     | (ix@(c, r), color) <- assocs field, r >= 0, pic <- maybeToList $ f ix <$> color]
 
-renderPolyomino :: (?env :: Environment) => Int -> Polyomino -> Color -> Picture
+renderPolyomino :: (?env :: Environment) => Int -> Polyomino -> BlockColor -> Picture
 renderPolyomino i omino color = Pictures [blockPos c r `Translate` (picBlocks ?env M.! (color, i))
     | (c, r) <- omino, r >= 0]
 
@@ -219,7 +215,7 @@ renderString :: (?env :: Environment) => String -> Picture
 renderString str = Pictures [Vec2 (picCharWidth ?env * i) 0 `Translate` (picChars ?env M.! ch) | (i, ch) <- zip [0..] str]
 
 data Environment = Environment
-    { picBlocks :: M.Map (Color, Int) Picture
+    { picBlocks :: M.Map (BlockColor, Int) Picture
     , picChars :: M.Map Char Picture
     , picBlockBackground :: Picture
     , picBackground :: Picture
@@ -243,14 +239,14 @@ main = void $ runGame (defaultGameParam {windowTitle="Monaris"}) $ do
     highscorePath <- embedIO $ (++"/.monaris_highscore") <$> getHomeDirectory
 
     let ?env = Environment
-                (M.fromAscList [((color, j), BitmapPicture $ cropBitmap imgBlocks (48, 48) (i * 48, j * 48))
-                    | (i, color) <- zip [0..] (enumFrom Red), j <- [0..7]])
+                (M.fromAscList [((i, j), BitmapPicture $ cropBitmap imgBlocks (48, 48) (i * 48, j * 48))
+                    | i <- [0..6], j <- [0..7]])
                 (M.fromAscList [(intToDigit n, BitmapPicture $ cropBitmap imgChars (24, 32) (n * 24, 0))
                     | n <- [0..9]])
                 (BitmapPicture imgBlockBackground)
                 (BitmapPicture imgBackground)
                 (BitmapPicture imgTitle)
-                48
+                24
                 24
 
     let loop h = do
