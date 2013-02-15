@@ -1,13 +1,10 @@
 {-# LANGUAGE MonadComprehensions, TupleSections, ImplicitParams, FlexibleContexts #-}
 import Control.Applicative
 import Control.Monad
-import Control.Monad.State
-import Control.Monad.Reader
 import Control.Monad.Free
 import Data.List
 import Data.Function
 import Data.Array
-import Data.Char
 import Data.Maybe
 import Data.Vect
 import qualified Data.Map as M
@@ -16,30 +13,26 @@ import Graphics.FreeGame
 import Paths_Monaris
 
 type Field = Array Coord (Maybe Color)
-data Color = Red | Yellow | Green | Cyan | Blue | Magenta | Orange deriving (Eq, Ord, Enum)
+type Color = Int
 type Coord = (Int, Int)
 type Polyomino = [Coord]
-data Spin = CCW | CW
 
 pair f (x, y) = (f x, f y)
 pair2 f (a, b) (c, d) = (f a c, f b d)
 
-polyominos = [([(0,0),(0,1),(0,2),(0,3)], Cyan)
-             ,([(0,0),(0,1),(1,0),(1,1)], Yellow)
-             ,([(0,0),(0,1),(0,2),(1,2)], Orange)
-             ,([(0,0),(0,1),(0,2),(-1,2)], Blue)
-             ,([(0,0),(0,1),(1,1),(1,2)], Green)
-             ,([(0,0),(0,1),(-1,1),(-1,2)], Red)
-             ,([(0,0),(-1,0),(1,0),(0,1)], Magenta)]
+polyominos = [([(0,0),(0,1),(0,2),(0,3)], 3)
+             ,([(0,0),(0,1),(1,0),(1,1)], 1)
+             ,([(0,0),(0,1),(0,2),(1,2)], 6)
+             ,([(0,0),(0,1),(0,2),(-1,2)], 4)
+             ,([(0,0),(0,1),(1,1),(1,2)], 2)
+             ,([(0,0),(0,1),(-1,1),(-1,2)], 0)
+             ,([(0,0),(-1,0),(1,0),(0,1)], 5)]
 
 translate :: Coord -> Polyomino -> Polyomino
 translate = map . pair2 (+)
 
-spin :: Spin -> Coord -> Polyomino -> Polyomino
-spin d center = map $ pair (`div`2) . pair2 (+) center . t . pair2 subtract center . pair (2*) where 
-    t = case d of
-            CCW -> \(x, y) -> (-y, x)
-            CW -> \(x, y) -> (y, -x)
+spin :: (Coord -> Coord) -> Coord -> Polyomino -> Polyomino
+spin t center = map $ pair (`div`2) . pair2 (+) center . t . pair2 subtract center . pair (2*) where 
 
 centers :: Polyomino -> [Coord]
 centers cs = cs' ++ [i | i@(c, r) <- map (pair2 (+) (1,1)) cs'
@@ -62,94 +55,81 @@ putToField :: Color -> Field -> Polyomino -> Maybe Field
 putToField color field omino = [field // map (,Just color) omino
     | all ((&&) <$> inRange (bounds field) <*> fmap isNothing (field !)) omino]
 
-getPolyomino :: Game (Polyomino, Color)
-getPolyomino = (polyominos!!) <$> randomness (0, length polyominos - 1)
-
 spinStrategy :: Polyomino -> Field -> [Polyomino] -> Polyomino
 spinStrategy original field = maximumBy (compare `on` ev) where
     g xs = fromIntegral (sum (map snd xs)) / fromIntegral (length xs)
     ev x = sum [fromEnum (g original <= g x)
                + sum [1 | c <- neighbors, not (inRange (bounds field) c) || isJust (field ! c)] ^ 2
-            | r <- nub $ map snd x]
+            | r <- nub $ map snd x] 
         where neighbors = nub $ pair2 (+) <$> x <*> [(0, 1), (0, -1), (1, 0), (1, 1)]
 
+getPolyomino :: Game (Polyomino, Color)
+getPolyomino = (polyominos!!) <$> randomness (0, length polyominos - 1)
+
 place :: (?env :: Environment) => Polyomino -> Color -> Field -> Int -> Game (Maybe Field)
-place polyomino color field period = do
-    if or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))] then return Nothing 
-        else run 1 (Left 0) (False, False, False, False, False, False)
-            `evalStateT` translate (5, -1 - maximum (map snd polyomino)) polyomino
+place polyomino color field period
+    | or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))] = return Nothing
+    | otherwise = do 
+        let            
+            mover = proc omino -> do
+                r <- keyDown KeyLeft *** keyDown KeyRight
+                let omino' = flip translate omino $ case r of
+                    (True, False) -> (-1, 0)
+                    (False, True) -> (1, 0)
+                    _ -> (0, 0)
+                returnA -< case putF omino' of
+                    Nothing -> omino
+                    Just _ -> omino'
+
+            spinner = proc omino -> do
+                r <- keyDown (KeyChar 'Z') &&& keyDown (KeyChar 'X')
+                returnA -< case filter (isJust . putF) . ($centers omino) $ case r of
+                        (True, False) -> map (spin omino \(x, y) -> (-y, x))
+                        (False, True) -> map (spin omino \(x, y) -> (y, -x))
+                        _ -> const []
+                        of
+                    [] -> omino
+                    xs -> spinStrategy omino field xs
+
+            landing = wrapStateful_ $ do
+                drawPicture $ renderPolyomino 7 omino color
+
+            faller = wrapStateful 0 $ \omino -> do
+                t <- get
+                put (t + 1)
+                drawPicture $ renderPolyomino 6 (destination omino) color
+                if t `mod` 5 == 0
+                    then translate (0, 1) omino
+                    else omino
+            
+            initial = translate (5, -1 - maximum (map snd polyomino)) polyomino
+
+        run (spinner >>> mover) (faller >>> midair) landing polyomino
+
     where
+        run common midair landing omino =  do
+            (omino, common') <- runVein common ()
+            drawPicture $ renderPolyomino 0 omino color
+            case putF $ translate (0, 1) omino of
+                Just _ -> do
+                    (omino', midair') <- runVein midair omino
+                    tick
+                    run common midair landing omino'
+                Nothing -> do
+                    (o, landing') <- execVein landing ()
+                    tick
+                    i run common' midair landing'
+
     ((c0, r0), (c1, r1)) = bounds field
     putF = putToField color field
-    run t param ks = do
-        [l',r',u',d',z',x'] <- lift $ mapM askInput [KeyLeft, KeyRight, KeyUp, KeyDown, KeyChar 'Z', KeyChar 'X']
-        when (t `mod` period == 0) $ void $ move (0, 1)
-
-        omino <- get
-        
-        drawPicture $ renderField field
-        param' <- flip runReaderT (ks, (l',r',u',d',z',x'))
-            $ if isNothing $ putF $ translate (0, 1) omino
-                then fmap Right <$> handleLanding (either (const (60, 120)) id param)
-                else fmap Left <$> handleNotLanding (either id (const 0) param)
-
-        drawPicture $ renderPolyomino 0 omino color        
-        case param' of
-            Just p -> tick >> run (succ t) p (l',r',u',d',z',x')
-            Nothing -> return (putF omino)
-    
-    handleCommon = do
-        ((l,r,u,d,z,x),(l',r',u',d',z',x')) <- ask
-        a <- case (not l && l', not r && r') of
-            (True, False) -> move (-1, 0)
-            (False, True) -> move (1, 0)
-            _ -> return False
-        b <- case (not z && z', not x && x') of
-            (True, False) -> sp CCW
-            (False, True) -> sp CW
-            _ -> return False
-        return $ a || b
-    
-    handleLanding (0, _) = return Nothing
-    handleLanding (play, playBound) = do
-        ((l,r,u,d,z,x),(l',r',u',d',z',x')) <- ask
-        omino <- get
-        drawPicture $ renderPolyomino 7 omino color
-        if not u && u' || not d && d' then return Nothing else do
-            f <- handleCommon
-            return $ Just $ if f then (playBound / 2, playBound - 10) else (play - 1, playBound)
-    
-    handleNotLanding t = do
-        handleCommon
-        ((l,r,u,d,z,x),(l',r',u',d',z',x')) <- ask
-        omino <- get
-        drawPicture $ renderPolyomino 6 (destination omino) color
-        when (not u && u') $ modify destination
-        if d'
-            then do
-                when (t `mod` 5 == 0) $ void $ move (0, 1)
-                return (Just (succ t))
-            else return (Just 0)
-
-    move dir = do omino <- translate dir <$> get
-                  if isJust $ putF omino
-                      then put omino >> return True
-                      else return False
-    
-    sp dir = do omino <- get
-                case filter (isJust . putF) $ map (flip (spin dir) omino) $ centers omino of
-                     [] -> return False
-                     xs -> put (spinStrategy omino field xs) >> return True
-
     destination omino
         | isNothing $ putF omino' = omino
         | otherwise = destination omino'
         where omino' = translate (0, 1) omino
 
 eliminate :: (?env :: Environment) => Field -> Game (Field, Int)
-eliminate field = do
-    unless (null rows) $ forM_ [0..5] $ \i -> replicateM_ 2 $ draw i >> tick
-    return (foldl deleteLine field rows, length rows)
+eliminate field = (foldl deleteLine field rows, length rows)
+    <$ (unless (null rows) $ forM_ [0..5] $ \i -> replicateM_ 2 $ draw i >> tick)
     where
         rows = completeLines field
         draw n = drawPicture $ flip renderFieldBy field
