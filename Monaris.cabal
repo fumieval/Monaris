@@ -1,5 +1,5 @@
 name:                Monaris
-version:             0.1.5
+version:             0.1.6
 synopsis:            A simple tetris clone
 description:         A tetris clone written in Haskell.
 homepage:            https://github.com/fumieval/Monaris/
@@ -20,4 +20,4 @@ source-repository head
 executable Monaris
   main-is:             Monaris.hs
   -- other-modules:       
-  build-depends:       base ==4.*, mtl >=2.1, array >=0.4, vect >=0.4, containers >=0.4, free >=3.0, directory >=1.1, free-game >= 0.3.2.6 && < 0.4
+  build-depends:       base ==4.*, mtl >=2.1, array >=0.4, containers >=0.4, free >=3.0, directory >=1.1, free-game == 0.9.*
