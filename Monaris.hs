@@ -162,8 +162,8 @@ eliminate field rows = do
             $ \(_, r) color -> picBlocks M.! (color, if r `elem` rows then n else 0)
 
 
-gameMain :: (?highScore :: Int) => Field -> Int -> Double -> (Polyomino, BlockColor) -> (Polyomino, BlockColor) -> Game Int
-gameMain field total line (omino, color) next = if or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))]
+gameMain :: Int -> Field -> Int -> Double -> (Polyomino, BlockColor) -> (Polyomino, BlockColor) -> Game Int
+gameMain highScore field total line (omino, color) next = if or [isJust $ field ! (c, r) | (c, r) <- range ((c0, r0), (c1, -1))]
     then total <$ embed (gameOver field)
     else do
         r <- embed $ place omino color field (floor $ 50 * 2 ** (-line/30))
@@ -176,7 +176,7 @@ gameMain field total line (omino, color) next = if or [isJust $ field ! (c, r) |
                     then return field'
                     else embed $ eliminate field' rows
                 next' <- getPolyomino
-                gameMain field'' (total + n ^ 2) (line + fromIntegral n) next next'
+                gameMain highScore field'' (total + n ^ 2) (line + fromIntegral n) next next'
     where
         ((c0, r0), (c1, r1)) = bounds field
         embed m = delay $ do
@@ -185,15 +185,15 @@ gameMain field total line (omino, color) next = if or [isJust $ field ! (c, r) |
                 renderFieldBackground field
                 lift $ untick m
             translate (V2 480 133) $ renderString $ show total
-            translate (V2 480 166) $ renderString $ show ?highScore
+            translate (V2 480 166) $ renderString $ show highScore
             translate (V2 500 220) $ uncurry (renderPolyomino 0) next
             either embed return cont
 
-gameTitle :: (?highScore :: Int) => Game ()
-gameTitle = do
+gameTitle :: Int -> Game ()
+gameTitle highScore = do
     translate (V2 320 240) (bitmap _title_png)
-    translate (V2 490 182) $ renderString $ show ?highScore
-    unlessM (keyPress KeyZ) (delay gameTitle)
+    translate (V2 490 182) $ renderString $ show highScore
+    unlessM (keyPress KeyZ) (delay $ gameTitle highScore)
 
 blockPos :: Int -> Int -> V2 Double
 blockPos c r = blockSize *^ fmap fromIntegral (V2 c r)
@@ -229,14 +229,13 @@ renderString :: (Monad m, Picture2D m) => String -> m ()
 renderString str = sequence_ [V2 (picCharWidth * i) 0 `translate` picChars M.! ch | (i, ch) <- zip [0..] str]
 
 main :: IO ()
-main = void $ runGame Windowed (BoundingBox 0 0 640 480) $ do
+main = void $ runGameDefault $ do
     let initialField = listArray ((0,-4), (9,18)) (repeat Nothing)
     highscorePath <- embedIO $ (++"/.monaris_highscore") <$> getHomeDirectory
     let loop h = do
-            let ?highScore = h
-            gameTitle
-            score <- join $ gameMain initialField 0 0 <$> getPolyomino <*> getPolyomino
-            when (?highScore < score) $ embedIO $ writeFile highscorePath (show score)
+            gameTitle h
+            score <- join $ gameMain h initialField 0 0 <$> getPolyomino <*> getPolyomino
+            when (h < score) $ embedIO $ writeFile highscorePath (show score)
             
             loop (max score h)
     f <- embedIO $ doesFileExist highscorePath
