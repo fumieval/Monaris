@@ -1,3 +1,7 @@
-Monaris 0.1.0.0 - @fumieval
+Monaris 0.1.8 - @fumieval
 
-`cabal install Monaris && Monaris`
+```
+cp stack.yaml.sample stack.yaml
+stack build
+stack exec Monaris
+```
