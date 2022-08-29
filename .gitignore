@@ -7,3 +7,5 @@ Monaris.exe
 Thumbs.db
 Desktop.ini
 .DS_Store
+dist-newstyle
+cabal.project.local

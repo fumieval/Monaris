@@ -186,7 +186,7 @@ gameMain highScore field total count (omino, col) next = if isGameover
             translate (V2 320 240) $ bitmap _background_png
             cont <- translate (V2 24 24) $ do
                 renderFieldBackground field
-                lift $ untick m
+                liftFrame $ untick m
             translate (V2 480 133) $ renderString $ show total
             translate (V2 480 166) $ renderString $ show highScore
             translate (V2 500 220) $ uncurry (renderPolyomino 0) next
@@ -236,13 +236,13 @@ renderString str = sequence_ [V2 (picCharWidth * i) 0 `translate` picChars M.! c
 main :: IO ()
 main = void $ runGameDefault $ do
     let initialField = listArray (V2 0 (-4), V2 9 18) (repeat Nothing)
-    highscorePath <- embedIO $ (++"/.monaris_highscore") <$> getHomeDirectory
+    highscorePath <- liftIO $ (++"/.monaris_highscore") <$> getHomeDirectory
     setTitle "Monaris"
     let loop h = do
             gameTitle h
             score <- join $ gameMain h initialField 0 0 <$> getPolyomino <*> getPolyomino
-            when (h < score) $ embedIO $ writeFile highscorePath (show score)
+            when (h < score) $ liftIO $ writeFile highscorePath (show score)
 
             loop (max score h)
-    f <- embedIO $ doesFileExist highscorePath
-    (if f then embedIO $ read <$> readFile highscorePath else return 0) >>= loop
+    f <- liftIO $ doesFileExist highscorePath
+    (if f then liftIO $ read <$> readFile highscorePath else return 0) >>= loop

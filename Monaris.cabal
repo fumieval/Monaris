@@ -19,6 +19,6 @@ source-repository head
 
 executable Monaris
   main-is:             Monaris.hs
-  -- other-modules:
+  other-modules: Paths_Monaris
   ghc-options: -O2 -Wall
   build-depends:       base ==4.*, mtl >=2.1, array >=0.4, containers >=0.4, free >=3.0, directory >=1.1, free-game >= 1.0 && < 1.3, lens
